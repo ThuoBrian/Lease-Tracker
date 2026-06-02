@@ -1,0 +1,40 @@
+Create a Laptop and PDA Lease-Tracker Laptop and PDA Lease Tracker should be a web-based asset management platform designed for organizations that lease out Portable Digital Assistants (PDAs) and Laptops to multiple projects. The platform ensures full visibility of laptop and PDA inventory, automates lease billing, assigns responsible personnel and facilitates monthly financial reconciliation.
+
+Feature Description
+
+PDA Inventory : Track all tablets — available, leased, or under maintenance Booking
+
+Laptop Inventory : Track all laptops— available, leased, or under maintenance Booking
+
+Form Create new leases with automatic cost calculation Auto-Billing Calculates costs at UGX 5,000/PDA/day and 20,000/laptop/day across any lease period
+
+Finance Review ; Monthly billing summaries per project, exportable as CSV
+
+Project Management;  Link project codes, grant codes, budget holders & field managers
+
+People Management; Add/remove users by role (Admin, Finance, Field Manager, etc.)
+
+Alerts System ; Send pickup-ready & expiry reminders to leasing agents
+
+Reports ; Lease summary, Laptop and PDA utilization, and project billing reports Export; Download CSV reports for Finance & Budget Holders Print;  Browser-native print for any report
+
+Ensure that other users (Project managers and Field managers or Research associates) can not add users, can not edit / add PDA and laptop information, can not add/edit projects
+
+Project managers, Field managers and Research associates can book for PDAs and laptops
+
+Incase the person booking selects a PDA or laptop that is already assigned, the system error message should read " Already assigned"
+
+The person booking should have visibility of what is actually available for lease.
+
+Ensure that the platform can flag depreciation to zero for these PDAs(Tablets) and laptops considering their purchase dates as per the depreciation policies in Uganda
+
+Ensure i can upload the most updated PDA and laptop list onto the system
+
+System owner, finance and Project managers should have visibility of lease information and be able to down reports in CSV or PDF formats
+
+The platform should require access permissions e.g username and password for access.
+
+The platform should be able to be deployed in github web pages
+
+Ensure the admin can bulk add or delete PDAs Tablets and laptops
+

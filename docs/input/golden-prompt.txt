@@ -1,0 +1,417 @@
+================================================================================
+LEASE-TRACKER — GOLDEN PROMPT
+Web-based Laptop & PDA Asset Lease Management Platform
+================================================================================
+
+--------------------------------------------------------------------------------
+1. PROJECT OVERVIEW
+--------------------------------------------------------------------------------
+
+Build a web-based asset lease management platform for organizations that lease
+Laptops and PDAs (tablets) to internal projects. The platform provides full
+inventory visibility, automated billing, role-based access, and monthly
+financial reconciliation.
+
+Primary users: Operations/IT (Admin), Finance team, Project Managers, Field
+Managers, and Research Associates across multiple concurrent projects.
+
+--------------------------------------------------------------------------------
+2. TECHNOLOGY STACK
+--------------------------------------------------------------------------------
+
+Frontend:
+  - React (Vite build tool)
+  - Tailwind CSS for styling
+  - React Router for client-side routing
+  - React Query for data fetching and caching
+
+Backend / Infrastructure:
+  - Supabase (PostgreSQL database, Row Level Security, Auth, Storage)
+  - All business logic implemented via Supabase queries and RLS policies;
+    no separate server required
+
+Deployment:
+  - GitHub Pages (static site)
+  - GitHub Actions CI/CD pipeline: build → deploy on push to main
+  - Supabase project hosted separately (free tier)
+
+Utilities:
+  - PapaParse for CSV parsing (bulk import)
+  - jsPDF + AutoTable for PDF report generation
+  - date-fns for date arithmetic
+
+--------------------------------------------------------------------------------
+3. USER ROLES & PERMISSIONS MATRIX
+--------------------------------------------------------------------------------
+
+Roles (in order of privilege):
+  ADMIN              — System owner/IT administrator
+  FINANCE            — Finance team member
+  PROJECT_MANAGER    — Project/budget holder
+  FIELD_MANAGER      — Field-based team lead
+  RESEARCH_ASSOCIATE — Field researcher
+
+Permission Matrix:
+
+  ACTION                          | ADMIN | FINANCE | PM  | FM  | RA
+  --------------------------------|-------|---------|-----|-----|-----
+  Log in                          |  YES  |   YES   | YES | YES | YES
+  View available inventory        |  YES  |   YES   | YES | YES | YES
+  Book a lease                    |  YES  |   YES   | YES | YES | YES
+  View own lease bookings         |  YES  |   YES   | YES | YES | YES
+  Add / edit / delete assets      |  YES  |   no    |  no |  no |  no
+  Bulk import assets (CSV)        |  YES  |   no    |  no |  no |  no
+  Add / edit / archive projects   |  YES  |   no    |  no |  no |  no
+  Add / edit / deactivate users   |  YES  |   no    |  no |  no |  no
+  View all lease records          |  YES  |   YES   | YES |  no |  no
+  Download reports (CSV / PDF)    |  YES  |   YES   | YES |  no |  no
+  View finance summary            |  YES  |   YES   |  no |  no |  no
+  View depreciation data          |  YES  |   YES   |  no |  no |  no
+  Receive in-app alerts           |  YES  |   YES   | YES | YES | YES
+
+  Note: Project Managers only see leases and reports tied to their assigned
+  projects. Admin and Finance see all projects.
+
+--------------------------------------------------------------------------------
+4. DATA MODEL
+--------------------------------------------------------------------------------
+
+Table: users
+  id             UUID PRIMARY KEY (managed by Supabase Auth)
+  full_name      TEXT NOT NULL
+  email          TEXT UNIQUE NOT NULL
+  role           ENUM (admin, finance, project_manager, field_manager,
+                       research_associate)
+  is_active      BOOLEAN DEFAULT true
+  created_at     TIMESTAMPTZ DEFAULT now()
+
+Table: assets
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  asset_type     ENUM (laptop, pda) NOT NULL
+  asset_tag      TEXT UNIQUE NOT NULL          -- e.g. "LT-001", "PDA-042"
+  serial_number  TEXT UNIQUE NOT NULL
+  model          TEXT NOT NULL                 -- e.g. "Dell Latitude 5420"
+  manufacturer   TEXT
+  purchase_date  DATE NOT NULL
+  purchase_cost  NUMERIC(12,2) NOT NULL        -- UGX
+  status         ENUM (available, leased, maintenance) DEFAULT 'available'
+  condition      ENUM (good, fair, poor) DEFAULT 'good'
+  notes          TEXT
+  created_at     TIMESTAMPTZ DEFAULT now()
+  updated_at     TIMESTAMPTZ DEFAULT now()
+
+Table: projects
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  project_name   TEXT NOT NULL
+  project_code   TEXT UNIQUE NOT NULL
+  grant_code     TEXT
+  budget_holder_id   UUID REFERENCES users(id)   -- a PROJECT_MANAGER user
+  field_manager_id   UUID REFERENCES users(id)   -- a FIELD_MANAGER user
+  is_active      BOOLEAN DEFAULT true
+  created_at     TIMESTAMPTZ DEFAULT now()
+
+Table: leases
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  asset_id       UUID REFERENCES assets(id) NOT NULL
+  project_id     UUID REFERENCES projects(id) NOT NULL
+  booked_by_id   UUID REFERENCES users(id) NOT NULL
+  start_date     DATE NOT NULL
+  end_date       DATE NOT NULL
+  daily_rate_ugx NUMERIC(10,2) NOT NULL        -- set automatically at booking
+  total_cost_ugx NUMERIC(12,2) NOT NULL        -- computed: rate × days
+  status         ENUM (active, returned, cancelled) DEFAULT 'active'
+  returned_date  DATE                          -- set when status → returned
+  notes          TEXT
+  created_at     TIMESTAMPTZ DEFAULT now()
+  updated_at     TIMESTAMPTZ DEFAULT now()
+
+Table: notifications
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  user_id        UUID REFERENCES users(id) NOT NULL
+  type           ENUM (pickup_ready, expiry_reminder, overdue, system)
+  title          TEXT NOT NULL
+  message        TEXT NOT NULL
+  is_read        BOOLEAN DEFAULT false
+  created_at     TIMESTAMPTZ DEFAULT now()
+
+--------------------------------------------------------------------------------
+5. FEATURE SPECIFICATIONS
+--------------------------------------------------------------------------------
+
+5.1 ASSET INVENTORY (PDAs & Laptops)
+-------------------------------------
+- Separate inventory views for PDAs and Laptops, accessible from sidebar.
+- Each view shows a searchable, filterable table:
+    Columns: Asset Tag | Serial No. | Model | Status | Condition |
+             Current Project (if leased) | Purchase Date | Depreciation Value
+  Filters: Status (available / leased / maintenance), Condition, Asset Type
+- Status badge colours: green = available, amber = leased, red = maintenance
+- Click any asset row to open an Asset Detail panel showing full history
+  (all past and current leases for that asset).
+- Admin can change an asset's status to "maintenance" manually.
+- Assets with depreciated value = UGX 0 are flagged with a "Fully Depreciated"
+  badge (still usable, just flagged).
+
+5.2 LEASE BOOKING FORM
+-----------------------
+- Available to all roles.
+- Step 1: Select asset type (Laptop or PDA).
+- Step 2: Show only assets with status = "available". If the user attempts
+  to book an asset that is already leased, display the error:
+    "Already assigned"
+  (This guards against race conditions — re-check availability server-side
+  before committing the lease.)
+- Step 3: Fields:
+    Project (dropdown — user's assigned projects or all projects for Admin)
+    Asset (dropdown filtered to available assets of selected type)
+    Start Date (date picker, cannot be in the past)
+    End Date (date picker, must be > Start Date)
+    Notes (optional free text)
+- On submit:
+    daily_rate_ugx is set automatically: UGX 5,000 for PDA, UGX 20,000 for Laptop
+    total_cost_ugx = daily_rate_ugx × (end_date − start_date + 1)
+    Asset status → "leased"
+    Lease record created with status = "active"
+    In-app notification sent to the booking user confirming the lease.
+
+5.3 AUTO-BILLING ENGINE
+------------------------
+- Billing rates (fixed, configured by Admin, stored in a settings table):
+    PDA:    UGX 5,000 / day
+    Laptop: UGX 20,000 / day
+- Day count is INCLUSIVE of both start_date and end_date.
+  Example: 1 Jun – 5 Jun = 5 days.
+- total_cost_ugx is calculated and locked at booking time (not recalculated
+  retroactively if rates change).
+- When a lease is marked "returned", actual days = returned_date − start_date + 1
+  and an adjusted_cost_ugx is stored for finance reconciliation.
+
+5.4 FINANCE REVIEW & MONTHLY RECONCILIATION
+---------------------------------------------
+- Accessible to Admin and Finance roles only.
+- Monthly summary table:
+    Columns: Month | Project | # Laptops Leased | Laptop Cost (UGX) |
+             # PDAs Leased | PDA Cost (UGX) | Total Cost (UGX)
+- Filters: Month/Year picker, Project dropdown.
+- Shows both booked cost (at lease creation) and adjusted cost (at return).
+- Export button: downloads the filtered view as CSV or PDF.
+
+5.5 PROJECT MANAGEMENT
+-----------------------
+- Admin-only create/edit/archive.
+- Fields: Project Name, Project Code (unique), Grant Code, Budget Holder
+  (select a PROJECT_MANAGER user), Field Manager (select a FIELD_MANAGER user).
+- Archived projects remain visible in reports but cannot receive new leases.
+- Project list view with search and active/archived filter.
+
+5.6 PEOPLE MANAGEMENT
+----------------------
+- Admin-only create/edit/deactivate.
+- Fields: Full Name, Email, Role (dropdown), Active status.
+- New users receive a Supabase Auth invitation email to set their password.
+- Deactivated users cannot log in but their historical records are preserved.
+- User list view with search and role/status filters.
+
+5.7 IN-APP ALERTS SYSTEM
+--------------------------
+- Notification bell icon in the top navigation bar, showing unread count badge.
+- Click opens a notification dropdown listing recent alerts (most recent first).
+- Alert types and triggers:
+    pickup_ready     — sent to booked_by user when a future lease reaches
+                       its start_date (triggered daily by a Supabase
+                       Edge Function or pg_cron job)
+    expiry_reminder  — sent 2 days before end_date of an active lease
+                       (to booked_by user and the project's field manager)
+    overdue          — sent when end_date has passed and status is still
+                       "active" (sent daily until returned or cancelled)
+    system           — sent by Admin for manual announcements
+- Mark individual alerts as read or "Mark all as read".
+- Notifications are stored in the notifications table; no email is sent.
+
+5.8 DEPRECIATION TRACKING
+---------------------------
+Depreciation method: Straight-line (cost evenly spread over useful life)
+Useful life defaults (configurable by Admin):
+  Laptop: 3 years (36 months)
+  PDA / Tablet: 2 years (24 months)
+
+Formula:
+  monthly_depreciation = purchase_cost / (useful_life_years × 12)
+  depreciated_value    = MAX(0, purchase_cost − (monthly_depreciation
+                              × months_since_purchase))
+  months_since_purchase = FLOOR(days since purchase_date / 30.44)
+
+Display:
+  - Current Book Value (UGX) shown on each asset card/row.
+  - Assets at UGX 0 show "Fully Depreciated" badge.
+  - Depreciation Report (Admin & Finance): table of all assets showing
+    Purchase Cost, Accumulated Depreciation, Current Book Value, and
+    estimated Full Depreciation Date.
+
+5.9 BULK CSV IMPORT (Admin only)
+----------------------------------
+- Upload button on the Inventory pages (separate for PDAs and Laptops).
+- Expected CSV columns (first row = header, order flexible):
+    asset_tag*, serial_number*, model*, manufacturer, purchase_date* (YYYY-MM-DD),
+    purchase_cost* (numeric UGX, no commas), condition (good/fair/poor),
+    notes
+  (* = required)
+- On upload:
+    Validate required fields; show row-level errors before committing.
+    Skip rows where asset_tag or serial_number already exists (show
+    count of skipped duplicates).
+    Confirm dialog shows: "X assets will be imported, Y duplicates skipped."
+    Commit inserts all valid rows in a single transaction.
+- Download CSV template button (pre-filled headers, one example row).
+
+5.10 BULK DELETE (Admin only)
+-------------------------------
+- On Inventory list views, checkboxes allow multi-select.
+- "Delete Selected" button (red, requires confirmation dialog) removes assets
+  that have no active or historical leases.
+- Assets with any lease history cannot be deleted; show count of blocked
+  deletions in the confirmation dialog.
+
+5.11 REPORTS & EXPORTS
+------------------------
+Reports accessible to Admin, Finance, and Project Manager roles:
+
+  a) Lease Summary Report
+     Filters: Date range, Asset type, Project, Status
+     Columns: Asset Tag | Asset Type | Model | Project | Booked By |
+               Start | End | Days | Daily Rate | Cost (UGX) | Status
+
+  b) Asset Utilization Report
+     Columns: Asset Tag | Type | Model | Total Lease Days (period) |
+               Idle Days (period) | Utilization %
+
+  c) Project Billing Report
+     Columns: Project Code | Project Name | Grant Code | # Assets |
+               Total Laptop Days | Laptop Cost | Total PDA Days |
+               PDA Cost | Grand Total (UGX)
+
+  d) Depreciation Report (Admin & Finance only)
+     Columns: Asset Tag | Type | Model | Purchase Date | Purchase Cost |
+               Accumulated Depreciation | Book Value | Fully Depreciated?
+
+Export options for all reports:
+  - CSV: client-side generation, immediate download
+  - PDF: jsPDF with AutoTable, formatted with org name and date stamp
+  - Print: browser-native print (print-safe CSS, hide navigation/buttons)
+
+--------------------------------------------------------------------------------
+6. BUSINESS RULES
+--------------------------------------------------------------------------------
+
+BR-01 Availability Check
+  An asset can only have one active lease at a time.
+  Check server-side (not just client-side) before inserting a new lease.
+  Error message on conflict: "Already assigned"
+
+BR-02 Billing Calculation
+  Cost is calculated at booking time and stored immutably.
+  Days = end_date − start_date + 1 (inclusive both ends).
+  If a lease is returned early, adjusted_cost_ugx = daily_rate × actual days.
+  The original total_cost_ugx is preserved for audit.
+
+BR-03 Asset Status Transitions
+  available  →  leased      (on lease creation)
+  leased     →  available   (on lease return / cancellation)
+  available  →  maintenance (Admin manual action)
+  maintenance → available   (Admin manual action)
+  leased     →  maintenance (blocked — must return lease first)
+
+BR-04 Depreciation
+  Depreciated value floor is UGX 0 (never negative).
+  Useful life and salvage value (default: 0) configurable per asset type.
+
+BR-05 Date Validation
+  Lease start_date cannot be in the past (booking date ≤ start_date).
+  end_date must be strictly after start_date (minimum 1-day lease).
+
+BR-06 Project Scope for Booking
+  Field Managers and Research Associates may only book assets for projects
+  they are assigned to (via projects.field_manager_id or a project_members
+  junction table if a user can be on multiple projects).
+  Project Managers may book for any project where they are the budget_holder.
+  Admin and Finance may book for any project.
+
+--------------------------------------------------------------------------------
+7. TECHNICAL REQUIREMENTS
+--------------------------------------------------------------------------------
+
+7.1 Authentication
+  - Supabase Auth (email + password). No OAuth/SSO required.
+  - Session persisted in localStorage; auto-refresh tokens.
+  - Unauthenticated users redirected to /login.
+  - Role stored in public.users table; fetched after login to determine UI
+    and RLS access.
+
+7.2 Row Level Security (Supabase RLS)
+  Enable RLS on all tables. Key policies:
+  - users: Users can read their own row. Admin can read/write all.
+  - assets: All authenticated users can SELECT. Only Admin can INSERT/UPDATE/DELETE.
+  - projects: All authenticated users can SELECT active projects. Only Admin
+    can INSERT/UPDATE.
+  - leases: Users can SELECT leases for their projects. Admin and Finance can
+    SELECT all. INSERT allowed for all authenticated users (server validates
+    asset availability). Only Admin can UPDATE status after creation.
+  - notifications: Users can SELECT/UPDATE only their own notifications.
+
+7.3 GitHub Pages Deployment
+  - Vite config: base set to the repository name path (e.g., /Lease-Tracker/).
+  - React Router using HashRouter (GitHub Pages does not support server-side
+    routing rewrites).
+  - Environment variables (Supabase URL, anon key) injected at build time via
+    GitHub Actions secrets → .env file.
+  - GitHub Actions workflow: on push to main → npm install → npm run build →
+    deploy dist/ to gh-pages branch.
+
+7.4 Supabase Edge Function / pg_cron for Alerts
+  - A daily scheduled job checks for leases where:
+      start_date = CURRENT_DATE                    → insert pickup_ready alert
+      end_date = CURRENT_DATE + 2                  → insert expiry_reminder alert
+      end_date < CURRENT_DATE AND status = 'active' → insert overdue alert
+  - Implement as a Supabase Edge Function triggered by pg_cron at 06:00 UTC.
+
+7.5 Settings Table
+  A simple key-value table for Admin-configurable parameters:
+    pda_daily_rate_ugx       DEFAULT 5000
+    laptop_daily_rate_ugx    DEFAULT 20000
+    laptop_useful_life_years DEFAULT 3
+    pda_useful_life_years    DEFAULT 2
+
+--------------------------------------------------------------------------------
+8. UI / UX REQUIREMENTS
+--------------------------------------------------------------------------------
+
+Layout:
+  - Fixed left sidebar with navigation links; collapsible on mobile.
+  - Top bar: page title, notification bell (unread count badge), user avatar
+    with dropdown (profile, sign out).
+  - Main content area: full-width, scrollable.
+
+Design:
+  - Tailwind CSS utility classes throughout; no custom CSS framework.
+  - Consistent status badges: use coloured pill chips (Tailwind colour tokens).
+  - Data tables: striped rows, hover highlight, sticky header on scroll.
+  - Empty states: illustrated message when a table has no rows.
+  - Loading states: skeleton loaders (not spinners) for table data.
+
+Responsive:
+  - Desktop-first but usable on tablet (768px+).
+  - Sidebar collapses to icon-only rail at < 1024px.
+  - Tables scroll horizontally on narrow viewports.
+
+Print:
+  - @media print styles: hide sidebar, top bar, export buttons, filters.
+  - Print layout shows org name, report title, date generated, and table data.
+
+Accessibility:
+  - All interactive elements keyboard-accessible.
+  - Form inputs have visible labels (not placeholder-only).
+  - Error messages associated with their fields via aria-describedby.
+
+--------------------------------------------------------------------------------
+END OF GOLDEN PROMPT
+================================================================================
