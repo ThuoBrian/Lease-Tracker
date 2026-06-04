@@ -222,7 +222,7 @@ CREATE POLICY "Notifications: authenticated insert" ON public.notifications FOR 
 -- VIEWS (convenience)
 -- =============================================================================
 
-CREATE VIEW public.active_leases AS
+CREATE VIEW public.active_leases WITH (security_invoker = true) AS
   SELECT
     l.*,
     a.asset_tag, a.asset_type, a.model,
