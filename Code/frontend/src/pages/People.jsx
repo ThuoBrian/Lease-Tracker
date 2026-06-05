@@ -23,16 +23,15 @@ function UserForm({ initial, onClose, onSaved }) {
       setSaving(false)
       if (err) { setError(err.message); return }
     } else {
-      const { data, error: inviteErr } = await supabase.auth.admin.inviteUserByEmail(form.email, {
-        data: { full_name: form.full_name, role: form.role },
+      const tempPassword = Array.from(crypto.getRandomValues(new Uint8Array(18)))
+        .map(b => b.toString(16).padStart(2, '0')).join('')
+      const { error: signUpErr } = await supabase.auth.signUp({
+        email: form.email,
+        password: tempPassword,
+        options: { data: { full_name: form.full_name, role: form.role } },
       })
-      if (inviteErr) {
-        const { error: err2 } = await supabase.from('users').insert({ full_name: form.full_name, email: form.email, role: form.role, is_active: true })
-        setSaving(false)
-        if (err2) { setError('Invite failed. Make sure admin rights are enabled for auth.admin.inviteUserByEmail, or add users directly from the Supabase dashboard.'); return }
-      } else {
-        setSaving(false)
-      }
+      setSaving(false)
+      if (signUpErr) { setError(signUpErr.message); return }
     }
     onSaved()
     onClose()

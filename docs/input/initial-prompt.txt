@@ -38,3 +38,6 @@ The platform should be able to be deployed in github web pages
 
 Ensure the admin can bulk add or delete PDAs Tablets and laptops
 
+N@kumatt12
+
+3utNuaaPPafoO6KM

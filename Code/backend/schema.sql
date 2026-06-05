@@ -184,7 +184,7 @@ $$;
 
 -- USERS policies
 CREATE POLICY "Users: read own row"       ON public.users FOR SELECT USING (id = auth.uid() OR public.my_role() = 'admin');
-CREATE POLICY "Users: admin full write"   ON public.users FOR ALL    USING (public.my_role() = 'admin');
+CREATE POLICY "Users: admin full write"   ON public.users FOR ALL    USING (public.my_role() = 'admin') WITH CHECK (public.my_role() = 'admin');
 
 -- SETTINGS policies
 CREATE POLICY "Settings: all read"        ON public.settings FOR SELECT TO authenticated USING (true);
